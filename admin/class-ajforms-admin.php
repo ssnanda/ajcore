@@ -30261,9 +30261,10 @@ class AJForms_Admin {
 							</div>
 						</th>
 						<th><?php esc_html_e( 'Product page', 'ajforms' ); ?></th>
+						<th style="width:18%;" title="<?php esc_attr_e( 'Optional services recommended on this product page and after it is added to the cart, in this order. Products that list this one recommend it back. Empty = Stripe metadata “related”, else same category.', 'ajforms' ); ?>"><?php esc_html_e( 'Recommends', 'ajforms' ); ?></th>
 					</tr>
 					<tr id="ajcore-catalog-cats-row" hidden>
-						<td colspan="<?php echo empty( $bulk_eligible ) ? 4 : 5; ?>" style="background:#f8fafc;">
+						<td colspan="<?php echo empty( $bulk_eligible ) ? 5 : 6; ?>" style="background:#f8fafc;">
 							<table class="ajcore-catalog-cats" style="width:100%;max-width:760px;border-collapse:collapse;">
 								<thead><tr><th style="text-align:left;"><?php esc_html_e( 'Category name', 'ajforms' ); ?></th><th style="text-align:left;"><?php esc_html_e( 'Slug', 'ajforms' ); ?></th><th style="width:60px;"><?php esc_html_e( 'In shop', 'ajforms' ); ?></th></tr></thead>
 								<tbody>
@@ -30400,6 +30401,27 @@ class AJForms_Admin {
 									<option value="<?php echo (int) $choice_id; ?>" <?php selected( $page_id, $choice_id ); ?>><?php echo esc_html( $label ); ?></option>
 								<?php endforeach; ?>
 							</select>
+						</td>
+						<td>
+							<?php
+							$rec_saved = isset( $catalog['related'][ $price_id ] ) ? (array) $catalog['related'][ $price_id ] : array();
+							for ( $rec_slot = 0; $rec_slot < 3; $rec_slot++ ) :
+								?>
+								<select name="catalog_related[<?php echo esc_attr( $price_id ); ?>][]" style="display:block;width:100%;max-width:220px;min-height:26px;font-size:12px;margin-bottom:3px;" aria-label="<?php echo esc_attr( sprintf( __( 'Recommendation %d', 'ajforms' ), $rec_slot + 1 ) ); ?>">
+									<option value=""><?php echo esc_html( 0 === $rec_slot ? __( '— Automatic —', 'ajforms' ) : '—' ); ?></option>
+									<?php foreach ( $prices as $rec_price ) : ?>
+										<?php
+										if ( ! is_array( $rec_price ) || empty( $rec_price['id'] ) || (string) $rec_price['id'] === $price_id ) {
+											continue;
+										}
+										if ( empty( $rec_price['product_active'] ) || empty( $rec_price['price_active'] ) || '' !== ajcore_product_catalog_pair_parent( (string) $rec_price['id'] ) ) {
+											continue;
+										}
+										?>
+										<option value="<?php echo esc_attr( $rec_price['id'] ); ?>" <?php selected( isset( $rec_saved[ $rec_slot ] ) ? $rec_saved[ $rec_slot ] : '', $rec_price['id'] ); ?>><?php echo esc_html( isset( $rec_price['product_name'] ) ? $rec_price['product_name'] : $rec_price['id'] ); ?></option>
+									<?php endforeach; ?>
+								</select>
+							<?php endfor; ?>
 						</td>
 					</tr>
 				<?php endforeach; ?>
@@ -30549,6 +30571,15 @@ class AJForms_Admin {
 			$pages[ sanitize_text_field( (string) $price_id ) ] = absint( $page_id );
 		}
 
+		// Recommends: ordered picks per product. All slots empty = automatic (no site entry).
+		$related = array();
+		foreach ( isset( $post['catalog_related'] ) && is_array( $post['catalog_related'] ) ? $post['catalog_related'] : array() as $price_id => $ids ) {
+			$ids = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', array_map( 'strval', (array) $ids ) ), 'strlen' ) ) );
+			if ( $ids ) {
+				$related[ sanitize_text_field( (string) $price_id ) ] = $ids;
+			}
+		}
+
 		// The tab lists only in-shop products by default, so the post holds just those rows. Keep
 		// the saved category and page links of every product that was not on screen (renamed
 		// category slugs still applied) instead of wiping them.
@@ -30574,6 +30605,11 @@ class AJForms_Admin {
 					$listing[ (string) $price_id ] = absint( $page_id );
 				}
 			}
+			foreach ( (array) ( isset( $catalog['related'] ) ? $catalog['related'] : array() ) as $price_id => $ids ) {
+				if ( ! isset( $shown[ (string) $price_id ] ) && ! isset( $related[ (string) $price_id ] ) ) {
+					$related[ (string) $price_id ] = (array) $ids;
+				}
+			}
 		}
 
 		if ( isset( $post['catalog_auto_pages'] ) ) {
@@ -30591,6 +30627,7 @@ class AJForms_Admin {
 		$catalog['assign']       = $assign;
 		$catalog['pages']        = $pages;
 		$catalog['listing']      = $listing;
+		$catalog['related']      = $related;
 		$catalog['catalog_page'] = isset( $post['catalog_page'] ) ? absint( $post['catalog_page'] ) : 0;
 
 		return ajcore_product_catalog_save( $catalog );

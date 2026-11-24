@@ -123,6 +123,18 @@ function ajcore_product_catalog_normalize( $raw ) {
 		}
 	}
 
+	// Recommended services per product, in display order (site choice; wins over Stripe metadata
+	// `related`). Empty list = no recommendations on purpose.
+	$related = array();
+	foreach ( isset( $raw['related'] ) && is_array( $raw['related'] ) ? $raw['related'] : array() as $price_id => $ids ) {
+		$price_id = sanitize_text_field( (string) $price_id );
+		if ( '' === $price_id ) {
+			continue;
+		}
+		$ids = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', array_map( 'strval', (array) $ids ) ), 'strlen' ) ) );
+		$related[ $price_id ] = array_slice( array_values( array_diff( $ids, array( $price_id ) ) ), 0, 6 );
+	}
+
 	$pages = array();
 	foreach ( isset( $raw['pages'] ) && is_array( $raw['pages'] ) ? $raw['pages'] : array() as $price_id => $page_id ) {
 		$price_id = sanitize_text_field( (string) $price_id );
@@ -135,6 +147,7 @@ function ajcore_product_catalog_normalize( $raw ) {
 	return array(
 		'categories'   => $categories,
 		'assign'       => $assign,
+		'related'      => $related,
 		'pages'        => $pages,
 		'listing'      => $listing,
 		'catalog_page' => isset( $raw['catalog_page'] ) ? absint( $raw['catalog_page'] ) : 0,
@@ -361,6 +374,10 @@ function ajcore_product_catalog_listing_url( $catalog = null ) {
  *     steps            how it works (list)
  *     faq_1_q / faq_1_a … faq_10_q / faq_10_a
  *     cta              final call-to-action heading
+ *     agreement_title, agreement_url, agreement_version   agreement accepted in the cart before
+ *                      checkout (includes/agreement-acceptance.php)
+ *     related          "Other services" shown first, in this order: product or price IDs (list).
+ *                      Remaining slots fall back to same-category, then other in-shop products.
  *     seo_title, seo_description   used when the page has no SEO title/description of its own
  */
 
@@ -378,6 +395,10 @@ function ajcore_product_page_meta_fields() {
 		'important_note'  => array( __( 'Important note', 'ajforms' ), 'note' ),
 		'service_slug'    => array( __( 'Page address (slug) for a new page', 'ajforms' ), 'text' ),
 		'cta'             => array( __( 'Call-to-action heading', 'ajforms' ), 'text' ),
+		'related'         => array( __( 'Other services shown first (product or price IDs, one per line)', 'ajforms' ), 'list' ),
+		'agreement_title'   => array( __( 'Agreement customers must accept at checkout (title)', 'ajforms' ), 'text' ),
+		'agreement_url'     => array( __( 'Agreement link', 'ajforms' ), 'text' ),
+		'agreement_version' => array( __( 'Agreement version (acceptance is required again when this changes)', 'ajforms' ), 'text' ),
 		'seo_title'       => array( __( 'SEO title', 'ajforms' ), 'text' ),
 		'seo_description' => array( __( 'SEO description', 'ajforms' ), 'text' ),
 	);
@@ -431,6 +452,7 @@ function ajcore_product_page_content( $price ) {
 		'steps'           => ajcore_product_page_list( $text( 'steps' ) ),
 		'faqs'            => $faqs,
 		'cta'             => $text( 'cta' ),
+		'related'         => ajcore_product_page_list( str_replace( ',', "\n", $text( 'related' ) ) ),
 		'seo_title'       => $text( 'seo_title' ),
 		'seo_description' => $text( 'seo_description' ),
 	);
@@ -600,6 +622,80 @@ add_action( 'update_option_ajforms_stripe_products_cache', 'ajcore_product_image
 add_action( 'add_option_ajforms_stripe_products_cache', 'ajcore_product_images_queue' );
 
 /**
+ * Ordered recommended price IDs for one price among $prices (synced rows):
+ *  1. its own list: Shop > Product pages "Recommends" (site), else Stripe metadata `related`
+ *     (product or price IDs, mapped to prices in $prices);
+ *  2. then reciprocal ones: products whose own list names this product.
+ * Optional purchases only (never dependencies). The price itself and required add-ons
+ * (the second half of a pair) are never returned.
+ */
+function ajcore_product_catalog_related_price_ids( $price, $prices, $catalog = null ) {
+	$catalog  = null === $catalog ? ajcore_product_catalog_get() : $catalog;
+	$price_id = is_array( $price ) && ! empty( $price['id'] ) ? (string) $price['id'] : '';
+	$by_id    = array();
+	$by_prod  = array();
+	foreach ( (array) $prices as $row ) {
+		if ( is_array( $row ) && ! empty( $row['id'] ) ) {
+			$by_id[ (string) $row['id'] ] = $row;
+			if ( ! empty( $row['product_id'] ) && ! isset( $by_prod[ (string) $row['product_id'] ] ) ) {
+				$by_prod[ (string) $row['product_id'] ] = (string) $row['id'];
+			}
+		}
+	}
+	$own_list = static function ( $row ) use ( $catalog, $by_id, $by_prod ) {
+		$id = (string) $row['id'];
+		if ( isset( $catalog['related'] ) && array_key_exists( $id, (array) $catalog['related'] ) ) {
+			$refs = (array) $catalog['related'][ $id ];
+		} else {
+			$content = ajcore_product_page_content( $row );
+			$refs    = (array) $content['related'];
+		}
+		$out = array();
+		foreach ( $refs as $ref ) {
+			$ref = (string) $ref;
+			if ( isset( $by_id[ $ref ] ) ) {
+				$out[] = $ref;
+			} elseif ( isset( $by_prod[ $ref ] ) ) {
+				$out[] = $by_prod[ $ref ];
+			}
+		}
+		return $out;
+	};
+	if ( '' === $price_id || ! isset( $by_id[ $price_id ] ) ) {
+		return array();
+	}
+	$ordered = $own_list( $by_id[ $price_id ] );
+	foreach ( $by_id as $other_id => $other ) {
+		if ( (string) $other_id !== $price_id && in_array( $price_id, $own_list( $other ), true ) ) {
+			$ordered[] = (string) $other_id;
+		}
+	}
+	$ordered = array_values( array_unique( $ordered ) );
+	return array_values(
+		array_filter(
+			$ordered,
+			static function ( $id ) use ( $price_id ) {
+				return $id !== $price_id && '' === ajcore_product_catalog_pair_parent( $id );
+			}
+		)
+	);
+}
+
+/**
+ * Customer-facing name of a synced price's product: metadata display_title when set, else the
+ * Stripe product name. Used for visible shop-card titles; Stripe, checkout, invoices and cart
+ * data attributes keep the product name.
+ */
+function ajcore_product_display_name( $price ) {
+	$meta  = is_array( $price ) && ! empty( $price['product_metadata'] ) && is_array( $price['product_metadata'] ) ? $price['product_metadata'] : array();
+	$title = isset( $meta['display_title'] ) ? trim( sanitize_text_field( (string) $meta['display_title'] ) ) : '';
+	if ( '' !== $title ) {
+		return $title;
+	}
+	return is_array( $price ) && isset( $price['product_name'] ) ? (string) $price['product_name'] : '';
+}
+
+/**
  * The page heading of a product page shows the product's display_title (Stripe metadata) when
  * set, e.g. "North Carolina Virtual Office Address", while Stripe and checkout keep the product
  * name. Main page heading only: menus, admin lists and other titles are untouched.
@@ -734,3 +830,70 @@ add_filter(
 	10,
 	2
 );
+
+/* ---- Site-wide floating cart ----------------------------------------------------------------
+ *
+ * The shop cart lives in sessionStorage per listing page ("ajcoreProductsCart:<path>:<archived>").
+ * On every other front-end page, when that cart holds items, a small floating button shows the
+ * item count and the amount due today and returns the shopper to the listing with the cart open
+ * (?ajp_cart=open). Right side on desktop, bottom-right on phones. Nothing is printed for empty
+ * carts or on pages that already render a cart ([ajcore_products] in cart mode).
+ */
+function ajcore_print_site_cart_launcher() {
+	if ( is_admin() || wp_doing_ajax() || is_feed() ) {
+		return;
+	}
+	?>
+	<div class="ajcore-site-cart" hidden>
+		<a class="ajcore-site-cart-link" href="#">
+			<span class="ajcore-site-cart-icon" aria-hidden="true">&#128722;</span>
+			<span class="ajcore-site-cart-text"><?php esc_html_e( 'Cart', 'ajforms' ); ?> <span class="ajcore-site-cart-count">0</span></span>
+			<span class="ajcore-site-cart-total"></span>
+		</a>
+	</div>
+	<style>
+	.ajcore-site-cart{position:fixed;right:20px;top:50%;transform:translateY(-50%);z-index:99990}
+	.ajcore-site-cart[hidden]{display:none}
+	.ajcore-site-cart-link{display:flex;flex-direction:column;align-items:center;gap:4px;max-width:120px;padding:14px 12px;border-radius:16px;background:#0f7ac6;color:#fff;text-decoration:none;font-weight:800;font-size:14px;line-height:1.25;text-align:center;box-shadow:0 14px 30px rgba(15,23,42,.25)}
+	.ajcore-site-cart-link:hover,.ajcore-site-cart-link:focus{background:#0b5f9c;color:#fff}
+	.ajcore-site-cart-link:focus-visible{outline:3px solid #fde68a;outline-offset:2px}
+	.ajcore-site-cart-icon{font-size:22px}
+	.ajcore-site-cart-count{display:inline-flex;min-width:22px;height:22px;align-items:center;justify-content:center;border-radius:999px;background:#fff;color:#0f7ac6;font-size:12px;margin-left:2px}
+	.ajcore-site-cart-total{font-size:12px;font-weight:700;opacity:.95}
+	@media (max-width:800px){.ajcore-site-cart{top:auto;bottom:16px;right:16px;transform:none}.ajcore-site-cart-link{flex-direction:row;max-width:none;padding:12px 16px;border-radius:999px}}
+	@media print{.ajcore-site-cart{display:none!important}}
+	</style>
+	<script>
+	(function () {
+		if (document.querySelector('.ajcore-products-wrap-cart')) { return; } // this page has its own cart
+		var box = document.querySelector('.ajcore-site-cart');
+		if (!box) { return; }
+		var best = null;
+		try {
+			for (var i = 0; i < window.sessionStorage.length; i++) {
+				var key = window.sessionStorage.key(i);
+				if (!key || key.indexOf('ajcoreProductsCart:') !== 0) { continue; }
+				var cart = JSON.parse(window.sessionStorage.getItem(key) || '{}') || {};
+				var items = Object.keys(cart).map(function (id) { return cart[id]; }).filter(Boolean);
+				if (!items.length) { continue; }
+				var path = key.slice('ajcoreProductsCart:'.length).replace(/:(yes|no)$/, '');
+				if (!best || items.length > best.items.length) { best = { path: path, items: items }; }
+			}
+		} catch (e) { return; }
+		if (!best) { return; }
+		var total = 0, currency = 'usd';
+		best.items.forEach(function (item) { total += (parseFloat(item.amount) || 0) * (parseInt(item.quantity, 10) || 1); currency = item.currency || currency; });
+		var money;
+		try { money = new Intl.NumberFormat(undefined, { style: 'currency', currency: currency.toUpperCase() }).format(total); } catch (e) { money = '$' + total.toFixed(2); }
+		var link = box.querySelector('.ajcore-site-cart-link');
+		link.href = best.path + (best.path.indexOf('?') === -1 ? '?' : '&') + 'ajp_cart=open';
+		box.querySelector('.ajcore-site-cart-count').textContent = String(best.items.length);
+		box.querySelector('.ajcore-site-cart-total').textContent = 'Due today ' + money;
+		link.setAttribute('aria-label', 'View cart: ' + best.items.length + ' item' + (best.items.length === 1 ? '' : 's') + ', ' + money + ' due today. ' + best.items.map(function (item) { return item.name; }).join(', '));
+		link.title = best.items.map(function (item) { return item.name; }).join(', ');
+		box.hidden = false;
+	})();
+	</script>
+	<?php
+}
+add_action( 'wp_footer', 'ajcore_print_site_cart_launcher', 20 );

@@ -81,7 +81,7 @@ trait AJCore_Product_Packages {
 			'prices'         => array(),
 			'review_notes'   => array(
 				'Set target.product_id or target.exact_name to an existing Stripe product.',
-				'Metadata keys used by AJCore product pages: display_title, summary, rich_description, category, service_slug, billing_note, state_fees_note, important_note, audience, turnaround, requirements, steps, faq_1_q / faq_1_a, cta, seo_title, seo_description.',
+				'Metadata keys used by AJCore product pages: display_title, summary, rich_description, category, service_slug, billing_note, state_fees_note, important_note, audience, turnaround, requirements, steps, faq_1_q / faq_1_a, cta, related, seo_title, seo_description.',
 				'images[]: { filename, mime_type, encoding: "base64", sha256, alt_text, data } (WebP, PNG or JPEG, max 2 MB).',
 			),
 		);

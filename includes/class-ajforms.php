@@ -8587,6 +8587,41 @@ class AJForms {
 		return '';
 	}
 
+	/**
+	 * Error text when checkout items contain a required add-on without any price that requires
+	 * it (e.g. a setup fee bought on its own), or '' when the items are valid. Uses the existing
+	 * dependency settings only; nothing product-specific.
+	 */
+	private function get_public_cart_dependency_only_error( $items, $allowed_price_map ) {
+		$required_by = array();
+		foreach ( $allowed_price_map as $candidate_id => $candidate ) {
+			$required = is_array( $candidate ) ? $this->get_public_price_required_price_id( $candidate, $allowed_price_map ) : '';
+			if ( '' !== $required && $required !== (string) $candidate_id ) {
+				$required_by[ $required ][] = (string) $candidate_id;
+			}
+		}
+		$in_cart = array();
+		foreach ( (array) $items as $item ) {
+			if ( is_array( $item ) && ! empty( $item['price_id'] ) ) {
+				$in_cart[ sanitize_text_field( (string) $item['price_id'] ) ] = true;
+			}
+		}
+		foreach ( array_keys( $in_cart ) as $item_price_id ) {
+			if ( empty( $required_by[ $item_price_id ] ) || array_intersect( $required_by[ $item_price_id ], array_keys( $in_cart ) ) ) {
+				continue;
+			}
+			$name   = function_exists( 'ajcore_product_display_name' ) ? ajcore_product_display_name( $allowed_price_map[ $item_price_id ] ) : $item_price_id;
+			$parent = $allowed_price_map[ $required_by[ $item_price_id ][0] ];
+			return sprintf(
+				/* translators: 1: add-on name, 2: product that requires it */
+				__( '%1$s can only be purchased together with %2$s.', 'ajforms' ),
+				$name,
+				function_exists( 'ajcore_product_display_name' ) ? ajcore_product_display_name( $parent ) : (string) $required_by[ $item_price_id ][0]
+			);
+		}
+		return '';
+	}
+
 	private function normalize_public_cart_items_with_dependencies( $items, $allowed_price_map ) {
 		$normalized = array();
 
@@ -9203,6 +9238,33 @@ class AJForms {
 			}
 		}
 
+		// Public checkout guards (generic): a required add-on (a price another public price
+		// requires, e.g. a setup fee) is never sold without a price that requires it, and every
+		// product agreement (metadata agreement_title / agreement_version) must be accepted at
+		// its current version. Acceptance is recorded once Stripe returns the session below.
+		$agreements_required = array();
+		if ( ! $portal_add_service ) {
+			$checkout_items = is_array( $items ) ? $items : array( array( 'price_id' => $price_id, 'quantity' => 1 ) );
+			$dependency_error = $this->get_public_cart_dependency_only_error( $checkout_items, $allowed_price_map );
+			if ( '' !== $dependency_error ) {
+				wp_send_json_error( $dependency_error, 400 );
+			}
+			if ( function_exists( 'ajcore_agreements_required_for_items' ) ) {
+				$agreements_required = ajcore_agreements_required_for_items( $checkout_items, $allowed_price_map );
+				$agreements_missing  = ajcore_agreements_missing( $agreements_required, ajcore_agreements_accepted_from_request() );
+				if ( ! empty( $agreements_missing ) ) {
+					wp_send_json_error(
+						sprintf(
+							/* translators: %s: agreement titles */
+							__( 'Please read and accept the %s before checkout.', 'ajforms' ),
+							implode( ', ', wp_list_pluck( $agreements_missing, 'title' ) )
+						),
+						400
+					);
+				}
+			}
+		}
+
 		if ( ! $portal_add_service && ! is_array( $items ) && ! empty( $allowed_price_map[ $price_id ]['recurring_interval'] ) ) {
 			$checkout_mode = 'subscription';
 		} elseif ( ! $portal_add_service && is_array( $items ) ) {
@@ -9544,6 +9606,10 @@ class AJForms {
 					'raw_data'           => $response,
 				)
 			);
+		}
+
+		if ( ! empty( $agreements_required ) && ! empty( $response['id'] ) && function_exists( 'ajcore_agreements_record' ) ) {
+			ajcore_agreements_record( $agreements_required, (string) $response['id'], isset( $_POST['current_url'] ) ? esc_url_raw( wp_unslash( $_POST['current_url'] ) ) : '' );
 		}
 
 		wp_send_json_success(
@@ -10036,23 +10102,28 @@ class AJForms {
 		}
 		$about = '' !== $c['description'] && $c['description'] !== $c['summary'] ? $c['description'] : '';
 
-		// Side list: other in-shop products (same category first), each with an Add button that
-		// hands the price to its listing page's cart (?ajp_add=…, the same path as this page's
-		// own button; required add-ons follow automatically). Test products and the required half
-		// of a pair never appear (get_public_stripe_prices() / pair check).
-		$related = array();
-		foreach ( $this->get_public_stripe_prices() as $other ) {
+		// Side list: other in-shop products, each with an Add button that hands the price to its
+		// listing page's cart (?ajp_add=…, the same path as this page's own button; required
+		// add-ons follow automatically). Order: the product's explicit `related` list (metadata,
+		// product or price IDs) in its own order, then same category, then the rest. Test products
+		// and the required half of a pair never appear (get_public_stripe_prices() / pair check).
+		$public_prices = $this->get_public_stripe_prices();
+		$explicit      = function_exists( 'ajcore_product_catalog_related_price_ids' ) ? ajcore_product_catalog_related_price_ids( $price, $public_prices, $catalog ) : array();
+		$related       = array();
+		foreach ( $public_prices as $other ) {
 			$other_id = (string) $other['id'];
 			if ( $other_id === $price_id || '' !== ajcore_product_catalog_pair_parent( $other_id ) ) {
 				continue;
 			}
 			$other_page    = ajcore_product_catalog_page_for_price( $other_id, $catalog );
 			$other_listing = ajcore_product_catalog_listing_for_price( $other_id, $catalog );
+			$rank          = array_search( $other_id, $explicit, true );
 			$related[]     = array(
+				'id'    => $other_id,
 				'row'   => $other,
 				'url'   => $other_page ? (string) get_permalink( $other_page ) : '',
 				'add'   => $other_listing ? add_query_arg( 'ajp_add', rawurlencode( $other_id ), (string) get_permalink( $other_listing ) ) : '',
-				'match' => $cats && array_intersect( $cats, ajcore_product_catalog_price_categories( $other, $catalog ) ) ? 1 : 0,
+				'match' => false !== $rank ? 1000 - (int) $rank : ( $cats && array_intersect( $cats, ajcore_product_catalog_price_categories( $other, $catalog ) ) ? 1 : 0 ),
 			);
 		}
 		usort( $related, static function ( $a, $b ) { return $b['match'] <=> $a['match']; } ); // stable in PHP 8: shop order within each group
@@ -10328,21 +10399,40 @@ class AJForms {
 							<h3><?php esc_html_e( 'Other services', 'ajforms' ); ?></h3>
 							<ul class="ajp-others">
 								<?php foreach ( $related as $item ) : ?>
-									<li>
+									<?php
+									$other_name = function_exists( 'ajcore_product_display_name' ) ? ajcore_product_display_name( $item['row'] ) : $item['row']['product_name'];
+									$cart_path  = '' !== $item['add'] ? (string) wp_parse_url( $item['add'], PHP_URL_PATH ) : '';
+									?>
+									<li data-price-id="<?php echo esc_attr( $item['id'] ); ?>" data-cart-path="<?php echo esc_attr( $cart_path ); ?>">
 										<div class="ajp-other-info">
 											<?php if ( '' !== $item['url'] ) : ?>
-												<a class="ajp-other-name" href="<?php echo esc_url( $item['url'] ); ?>"><?php echo esc_html( $item['row']['product_name'] ); ?></a>
+												<a class="ajp-other-name" href="<?php echo esc_url( $item['url'] ); ?>"><?php echo esc_html( $other_name ); ?></a>
 											<?php else : ?>
-												<span class="ajp-other-name"><?php echo esc_html( $item['row']['product_name'] ); ?></span>
+												<span class="ajp-other-name"><?php echo esc_html( $other_name ); ?></span>
 											<?php endif; ?>
 											<span class="ajp-other-price"><?php echo wp_kses_post( $this->format_shop_price_html( $item['row']['amount'], $item['row']['currency'], ! empty( $item['row']['recurring_interval'] ) ? $item['row']['recurring_interval'] : '' ) ); ?></span>
 										</div>
 										<?php if ( '' !== $item['add'] ) : ?>
-											<a class="ajp-other-add" href="<?php echo esc_url( $item['add'] ); ?>" aria-label="<?php echo esc_attr( sprintf( __( 'Add %s to cart', 'ajforms' ), $item['row']['product_name'] ) ); ?>"><?php esc_html_e( 'Add', 'ajforms' ); ?></a>
+											<a class="ajp-other-add" href="<?php echo esc_url( $item['add'] ); ?>" aria-label="<?php echo esc_attr( sprintf( __( 'Add %s to cart', 'ajforms' ), $other_name ) ); ?>"><?php esc_html_e( 'Add', 'ajforms' ); ?></a>
 										<?php endif; ?>
 									</li>
 								<?php endforeach; ?>
 							</ul>
+							<script>
+							(function () {
+								// Hide services already in the shopper's cart (cart lives in sessionStorage per listing page).
+								try {
+									document.querySelectorAll('.ajp-others li[data-cart-path]').forEach(function (li) {
+										var stored = window.sessionStorage.getItem('ajcoreProductsCart:' + li.getAttribute('data-cart-path') + ':no');
+										var cart = stored ? JSON.parse(stored) : null;
+										if (cart && cart[li.getAttribute('data-price-id')]) { li.hidden = true; }
+									});
+									document.querySelectorAll('.ajp-others').forEach(function (list) {
+										if (!list.querySelector('li:not([hidden])')) { list.closest('.ajp-box').hidden = true; }
+									});
+								} catch (e) {}
+							})();
+							</script>
 						</div>
 					<?php endif; ?>
 				</aside>
@@ -10689,10 +10779,11 @@ class AJForms {
 					$plain_description = wp_strip_all_tags( $rich_description );
 					$summary        = ! empty( $price['product_summary'] ) ? (string) $price['product_summary'] : wp_trim_words( $plain_description, 22 );
 					$short_description = wp_trim_words( $plain_description, 34 );
+					$display_name   = function_exists( 'ajcore_product_display_name' ) ? ajcore_product_display_name( $price ) : (string) $price['product_name'];
 					$required_price_id = $this->get_public_price_required_price_id( $price, $public_price_map );
 					$required_product_name = '';
 					if ( '' !== $required_price_id && ! empty( $public_price_map[ $required_price_id ]['product_name'] ) ) {
-						$required_product_name = sanitize_text_field( (string) $public_price_map[ $required_price_id ]['product_name'] );
+						$required_product_name = sanitize_text_field( function_exists( 'ajcore_product_display_name' ) ? ajcore_product_display_name( $public_price_map[ $required_price_id ] ) : (string) $public_price_map[ $required_price_id ]['product_name'] );
 					} elseif ( ! empty( $price['requires_product_name'] ) ) {
 						$required_product_name = sanitize_text_field( (string) $price['requires_product_name'] );
 					}
@@ -10732,6 +10823,9 @@ class AJForms {
 						data-price-id="<?php echo esc_attr( $price['id'] ); ?>"
 						data-price-ids="<?php echo esc_attr( implode( ' ', wp_list_pluck( $price_options, 'id' ) ) ); ?>"
 						data-product-name="<?php echo esc_attr( $price['product_name'] ); ?>"
+						data-display-name="<?php echo esc_attr( $display_name ); ?>"
+						data-related="<?php echo esc_attr( $catalog && function_exists( 'ajcore_product_catalog_related_price_ids' ) ? implode( ' ', ajcore_product_catalog_related_price_ids( $price, $prices, $catalog ) ) : '' ); ?>"
+						<?php echo function_exists( 'ajcore_agreement_data_attributes' ) ? ajcore_agreement_data_attributes( $price ) : ''; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- attributes escaped in the helper. ?>
 						data-amount="<?php echo esc_attr( $price_amount ); ?>"
 						data-currency="<?php echo esc_attr( strtolower( $price['currency'] ) ); ?>"
 						data-recurring-interval="<?php echo esc_attr( ! empty( $price['recurring_interval'] ) ? sanitize_key( (string) $price['recurring_interval'] ) : '' ); ?>"
@@ -10748,7 +10842,7 @@ class AJForms {
 							<img class="ajcore-product-image" src="<?php echo esc_url( $card_image ); ?>" alt="" loading="lazy" decoding="async">
 						<?php endif; ?>
 						<?php if ( $show_title ) : ?>
-							<h3 class="ajcore-product-title" style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php if ( '' !== $card_link ) : ?><a href="<?php echo esc_url( $card_link ); ?>"><?php echo esc_html( $price['product_name'] ); ?></a><?php else : ?><?php echo esc_html( $price['product_name'] ); ?><?php endif; ?></h3>
+							<h3 class="ajcore-product-title" style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php if ( '' !== $card_link ) : ?><a href="<?php echo esc_url( $card_link ); ?>"><?php echo esc_html( $display_name ); ?></a><?php else : ?><?php echo esc_html( $display_name ); ?><?php endif; ?></h3>
 						<?php endif; ?>
 						<?php if ( $show_summary && '' !== $summary ) : ?>
 							<div class="ajcore-product-summary" style="margin-bottom:12px;color:#64748b;line-height:1.45;"><?php echo esc_html( $summary ); ?></div>
@@ -10791,7 +10885,7 @@ class AJForms {
 						<?php endif; ?>
 
 						<?php if ( count( $price_options ) > 1 ) : ?>
-							<div class="ajcore-product-options" role="radiogroup" aria-label="<?php echo esc_attr( sprintf( __( '%s options', 'ajforms' ), $price['product_name'] ) ); ?>">
+							<div class="ajcore-product-options" role="radiogroup" aria-label="<?php echo esc_attr( sprintf( __( '%s options', 'ajforms' ), $display_name ) ); ?>">
 								<?php foreach ( $price_options as $option_index => $option ) : ?>
 									<?php
 									$option_amount   = (float) $option['amount'];
@@ -10844,6 +10938,13 @@ class AJForms {
 								><?php esc_html_e( 'Add to Cart', 'ajforms' ); ?></button>
 							</div>
 						<?php elseif ( $show_button ) : ?>
+							<?php $buy_agreement = function_exists( 'ajcore_agreement_for_price' ) ? ajcore_agreement_for_price( $price ) : null; ?>
+							<?php if ( $buy_agreement ) : ?>
+								<label class="ajcore-agreement-accept">
+									<input type="checkbox" class="ajcore-agreement-checkbox" value="<?php echo esc_attr( $buy_agreement['key'] ); ?>">
+									<span><?php esc_html_e( 'I have read and agree to the', 'ajforms' ); ?> <?php if ( '' !== $buy_agreement['url'] ) : ?><a href="<?php echo esc_url( $buy_agreement['url'] ); ?>" target="_blank" rel="noopener"><?php echo esc_html( $buy_agreement['title'] ); ?></a><?php else : ?><?php echo esc_html( $buy_agreement['title'] ); ?><?php endif; ?> <?php echo esc_html( sprintf( __( '(version %s)', 'ajforms' ), $buy_agreement['version'] ) ); ?></span>
+								</label>
+							<?php endif; ?>
 							<button
 								type="button"
 								class="ajcore-product-buy"
@@ -10854,7 +10955,7 @@ class AJForms {
 							><?php echo esc_html( $atts['button'] ); ?></button>
 						<?php endif; ?>
 						<?php if ( '' !== $card_link ) : ?>
-							<a class="ajcore-product-more" href="<?php echo esc_url( $card_link ); ?>"><?php echo esc_html( isset( $catalog_ui['link_label'] ) ? $catalog_ui['link_label'] : __( 'Details', 'ajforms' ) ); ?> <span aria-hidden="true">&rarr;</span><span class="screen-reader-text"> <?php echo esc_html( $price['product_name'] ); ?></span></a>
+							<a class="ajcore-product-more" href="<?php echo esc_url( $card_link ); ?>"><?php echo esc_html( isset( $catalog_ui['link_label'] ) ? $catalog_ui['link_label'] : __( 'Details', 'ajforms' ) ); ?> <span aria-hidden="true">&rarr;</span><span class="screen-reader-text"> <?php echo esc_html( $display_name ); ?></span></a>
 						<?php endif; ?>
 					</div>
 				<?php endforeach; ?>
@@ -10881,6 +10982,7 @@ class AJForms {
 					<div class="ajcore-cart-empty" style="color:#64748b;"><?php esc_html_e( 'No products selected yet.', 'ajforms' ); ?></div>
 					<div class="ajcore-cart-items" style="display:grid;gap:10px;"></div>
 					<div class="ajcore-cart-total" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:22px;font-weight:800;color:#111827;"></div>
+					<div class="ajcore-cart-agreements ajcore-cart-aside-agreements" hidden></div>
 					<button type="button" class="ajcore-cart-checkout" disabled style="margin-top:16px;background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:13px 20px;font-weight:800;cursor:pointer;"><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
 					<p class="ajcore-cart-message" style="display:none;margin:12px 0 0;color:#b32d2e;"></p>
 				</aside>
@@ -10897,9 +10999,11 @@ class AJForms {
 						<div class="ajcore-cart-modal-empty"><?php esc_html_e( 'No products selected yet.', 'ajforms' ); ?></div>
 						<div class="ajcore-cart-modal-items"></div>
 						<div class="ajcore-cart-modal-note"></div>
+						<div class="ajcore-cart-agreements ajcore-cart-modal-agreements" hidden></div>
 						<div class="ajcore-cart-modal-footer">
 							<div class="ajcore-cart-modal-total"></div>
 							<div class="ajcore-cart-modal-actions">
+								<button type="button" class="ajcore-cart-modal-continue" data-ajcore-cart-close="1"><?php esc_html_e( 'Continue Shopping', 'ajforms' ); ?></button>
 								<button type="button" class="ajcore-cart-modal-clear"><?php esc_html_e( 'Clear Cart', 'ajforms' ); ?></button>
 								<button type="button" class="ajcore-cart-modal-checkout" disabled><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
 							</div>
@@ -11092,12 +11196,19 @@ class AJForms {
 					}
 					Object.keys(decoded).forEach(function(priceId) {
 						const item = decoded[priceId];
-						if (!item || !item.price_id || !getProductByPriceId(item.price_id)) {
+						const pageProduct = item && item.price_id ? getProductByPriceId(item.price_id) : null;
+						if (!item || !item.price_id || !pageProduct) {
 							return;
 						}
+						// Name and agreement come from the page, so a changed agreement version is
+						// never carried over from an older visit.
 						cart[item.price_id] = {
 							price_id: item.price_id,
-							name: item.name || 'Product',
+							name: pageProduct.dataset.displayName || item.name || 'Product',
+							agreement_key: pageProduct.dataset.agreementKey || '',
+							agreement_title: pageProduct.dataset.agreementTitle || '',
+							agreement_url: pageProduct.dataset.agreementUrl || '',
+							agreement_version: pageProduct.dataset.agreementVersion || '',
 							amount: parseFloat(item.amount || '0') || 0,
 							currency: item.currency || 'usd',
 							recurring_interval: item.recurring_interval || '',
@@ -11200,6 +11311,92 @@ class AJForms {
 				return formatCurrency(amount, currency) + (intervalLabel ? ' ' + intervalLabel : '');
 			}
 
+			// "Due today: $218 · Then $60 per month · $98 per year": the first payment (every item
+			// once: one-time items, first periods and required setup fees) and the recurring
+			// amounts after it, one per billing interval. Only Stripe prices in the cart count;
+			// government fees paid by the customer elsewhere are never part of these totals.
+			function getCartTotals(items) {
+				const totals = { dueToday: 0, recurring: {}, currency: 'usd' };
+				items.forEach(function(item) {
+					const line = (parseFloat(item.amount) || 0) * (parseInt(item.quantity, 10) || 0);
+					totals.dueToday += line;
+					totals.currency = item.currency || totals.currency;
+					if (item.recurring_interval) {
+						const interval = String(item.recurring_interval);
+						totals.recurring[interval] = (totals.recurring[interval] || 0) + line;
+					}
+				});
+				return totals;
+			}
+
+			function getCartTotalsLabel(items) {
+				if (!items.length) {
+					return '';
+				}
+				const totals = getCartTotals(items);
+				let label = 'Due today: ' + formatCurrency(totals.dueToday, totals.currency);
+				['week', 'month', 'year'].concat(Object.keys(totals.recurring)).filter(function(interval, index, all) {
+					return totals.recurring[interval] > 0 && all.indexOf(interval) === index;
+				}).forEach(function(interval, index) {
+					label += (index === 0 ? ' · Then ' : ' · ') + formatCurrency(totals.recurring[interval], totals.currency) + ' ' + getIntervalLabel(interval).toLowerCase();
+				});
+				return label;
+			}
+
+			// Agreements required by the items in the cart (one checkbox each), keyed by agreement.
+			const acceptedAgreements = {};
+			function getCartAgreements(items) {
+				const agreements = {};
+				items.forEach(function(item) {
+					if (item.agreement_key && item.agreement_title && item.agreement_version) {
+						agreements[item.agreement_key] = { key: item.agreement_key, title: item.agreement_title, url: item.agreement_url || '', version: item.agreement_version };
+					}
+				});
+				return Object.values(agreements);
+			}
+
+			function renderCartAgreements(container, items) {
+				if (!container) {
+					return;
+				}
+				const agreements = getCartAgreements(items);
+				container.innerHTML = '';
+				container.hidden = agreements.length === 0;
+				agreements.forEach(function(agreement) {
+					const label = document.createElement('label');
+					label.className = 'ajcore-agreement-accept';
+					const box = document.createElement('input');
+					box.type = 'checkbox';
+					box.className = 'ajcore-agreement-checkbox';
+					box.value = agreement.key;
+					box.checked = !!acceptedAgreements[agreement.key];
+					box.addEventListener('change', function() {
+						acceptedAgreements[agreement.key] = box.checked;
+						root.querySelectorAll('.ajcore-agreement-checkbox[value="' + agreement.key + '"]').forEach(function(other) { other.checked = box.checked; });
+					});
+					const text = document.createElement('span');
+					text.appendChild(document.createTextNode('I have read and agree to the '));
+					if (agreement.url) {
+						const link = document.createElement('a');
+						link.href = agreement.url;
+						link.target = '_blank';
+						link.rel = 'noopener';
+						link.textContent = agreement.title;
+						text.appendChild(link);
+					} else {
+						text.appendChild(document.createTextNode(agreement.title));
+					}
+					text.appendChild(document.createTextNode(' (version ' + agreement.version + ')'));
+					label.appendChild(box);
+					label.appendChild(text);
+					container.appendChild(label);
+				});
+			}
+
+			function getMissingAgreements() {
+				return getCartAgreements(Object.values(cart)).filter(function(agreement) { return !acceptedAgreements[agreement.key]; });
+			}
+
 			function getCartItemPriceLabel(item) {
 				if (item && item.price_label) {
 					return item.price_label;
@@ -11291,7 +11488,11 @@ class AJForms {
 				}
 				cart[priceId] = {
 					price_id: priceId,
-					name: product.dataset.productName || 'Product',
+					name: product.dataset.displayName || product.dataset.productName || 'Product',
+					agreement_key: product.dataset.agreementKey || '',
+					agreement_title: product.dataset.agreementTitle || '',
+					agreement_url: product.dataset.agreementUrl || '',
+					agreement_version: product.dataset.agreementVersion || '',
 					amount: parseFloat(product.dataset.amount || '0') || 0,
 					currency: product.dataset.currency || 'usd',
 					recurring_interval: product.dataset.recurringInterval || '',
@@ -11395,9 +11596,15 @@ class AJForms {
 					cartItems.appendChild(row);
 				});
 				cartTotal.style.display = items.length ? 'block' : 'none';
-				cartTotal.textContent = items.length ? 'Total: ' + formatCurrency(total, currency) : '';
+				cartTotal.textContent = getCartTotalsLabel(items);
+				renderCartAgreements(root.querySelector('.ajcore-cart-aside-agreements'), items);
+				root.dispatchEvent(new CustomEvent('ajcore:cart-changed', { detail: { priceIds: Object.keys(cart) } }));
 				if (miniCartStatus && items.length) {
-					miniCartStatus.textContent = itemCount + ' selected · ' + formatCurrency(total, currency);
+					// Same bar width: item names, then what is due today (truncates with an ellipsis;
+					// the full text is in the tooltip).
+					const miniNames = items.map(function(item) { return item.name; }).join(', ');
+					miniCartStatus.textContent = miniNames + ' · ' + getCartTotalsLabel(items);
+					miniCartStatus.title = miniCartStatus.textContent;
 				}
 				if (cartModalItems && cartModalEmpty && cartModalTotal && cartModalCheckoutButton) {
 					cartModalItems.innerHTML = '';
@@ -11425,7 +11632,8 @@ class AJForms {
 						});
 						cartModalItems.appendChild(modalRow);
 					});
-					cartModalTotal.textContent = items.length ? 'Total: ' + formatCurrency(total, currency) : '';
+					cartModalTotal.textContent = getCartTotalsLabel(items);
+					renderCartAgreements(root.querySelector('.ajcore-cart-modal-agreements'), items);
 					if (cartModalNote) {
 						const messageText = cartMessage && cartMessage.textContent ? cartMessage.textContent : '';
 						cartModalNote.textContent = messageText;
@@ -11511,6 +11719,7 @@ class AJForms {
 				const formData = new FormData();
 				formData.append('action', 'ajcore_create_checkout_session');
 				formData.append('items', JSON.stringify(items.map(function(item) { return { price_id: item.price_id, quantity: 1 }; })));
+				formData.append('agreements', JSON.stringify(Object.keys(acceptedAgreements).filter(function(key) { return acceptedAgreements[key]; })));
 				formData.append('nonce', root.dataset.cartNonce);
 				formData.append('include_archived', root.dataset.includeArchived || 'no');
 				formData.append('current_url', window.location.href);
@@ -11562,9 +11771,9 @@ class AJForms {
 
 			function openCartModal() {
 				if (!cartModal) {
-					const firstProduct = root.querySelector('.ajcore-product');
-					if (firstProduct) {
-						firstProduct.scrollIntoView({ behavior: 'smooth', block: 'start' });
+					const cartPanel = cartItems || root.querySelector('.ajcore-product');
+					if (cartPanel) {
+						cartPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 					}
 					return;
 				}
@@ -11675,6 +11884,12 @@ class AJForms {
 						addButton.classList.remove('ajcore-added');
 						addButton.textContent = 'Add to Cart';
 					}, 800);
+					// An explicit Add to Cart shows the cart (Continue Shopping / Checkout) and narrows
+					// the listing to services recommended for the cart.
+					if (cart[priceId]) {
+						root.dispatchEvent(new CustomEvent('ajcore:cart-added', { detail: { priceIds: Object.keys(cart) } }));
+						openCartModal();
+					}
 					return;
 				}
 
@@ -11690,11 +11905,19 @@ class AJForms {
 				if (!button || button.disabled) {
 					return;
 				}
+				const buyCard = button.closest('.ajcore-product');
+				const buyAgreement = buyCard ? buyCard.querySelector('.ajcore-agreement-checkbox') : null;
+				if (buyAgreement && !buyAgreement.checked) {
+					buyAgreement.focus();
+					window.alert('Please read and accept the agreement before checkout.');
+					return;
+				}
 				button.disabled = true;
 				const originalText = button.textContent;
 				button.textContent = 'Loading...';
 				const formData = new FormData();
 				formData.append('action', 'ajcore_create_checkout_session');
+				formData.append('agreements', JSON.stringify(buyAgreement ? [buyAgreement.value] : []));
 				formData.append('price_id', button.dataset.priceId);
 				formData.append('nonce', button.dataset.nonce);
 				formData.append('include_archived', root.dataset.includeArchived || 'no');
@@ -11730,6 +11953,13 @@ class AJForms {
 					const items = cartItemsForCheckout.map(function(item) {
 						return { price_id: item.price_id, quantity: 1 };
 					});
+					const missingAgreements = getMissingAgreements();
+					if (missingAgreements.length) {
+						setCartMessage('Please read and accept the ' + missingAgreements.map(function(agreement) { return agreement.title; }).join(', ') + ' before checkout.');
+						const firstBox = root.querySelector('.ajcore-cart-modal.is-open .ajcore-agreement-checkbox:not(:checked)') || root.querySelector('.ajcore-agreement-checkbox:not(:checked)');
+						if (firstBox) { firstBox.focus(); }
+						return;
+					}
 					checkoutButton.disabled = true;
 					const originalText = checkoutButton.textContent;
 					checkoutButton.textContent = 'Loading...';
@@ -11741,6 +11971,7 @@ class AJForms {
 					const formData = new FormData();
 					formData.append('action', 'ajcore_create_checkout_session');
 					formData.append('items', JSON.stringify(items));
+					formData.append('agreements', JSON.stringify(Object.keys(acceptedAgreements).filter(function(key) { return acceptedAgreements[key]; })));
 					formData.append('nonce', root.dataset.cartNonce);
 					formData.append('include_archived', root.dataset.includeArchived || 'no');
 					formData.append('current_url', window.location.href);
@@ -11848,6 +12079,15 @@ class AJForms {
 			.ajcore-cart-modal-clear:disabled{opacity:.45;cursor:not-allowed}
 			.ajcore-cart-modal-checkout{border:0;background:#0f7ac6;color:#fff;border-radius:999px;padding:12px 18px;font-weight:900;cursor:pointer}
 			.ajcore-cart-modal-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
+			.ajcore-products-related-note{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 16px;padding:12px 16px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;color:#1e3a8a;font-weight:700}
+			.ajcore-products-related-note[hidden]{display:none}
+			.ajcore-products-related-all{border:1px solid #1e40af;background:#fff;color:#1e40af;border-radius:999px;padding:6px 14px;font-weight:800;cursor:pointer}
+			.ajcore-cart-modal-continue{border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:999px;padding:12px 18px;font-weight:800;cursor:pointer}
+			.ajcore-cart-agreements{display:grid;gap:8px;margin:12px 0 0}
+			.ajcore-cart-agreements[hidden]{display:none}
+			.ajcore-agreement-accept{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.45;color:#334155;cursor:pointer}
+			.ajcore-agreement-accept input{margin-top:3px;width:18px;height:18px;flex:0 0 auto}
+			.ajcore-agreement-accept a{color:#0f7ac6;text-decoration:underline}
 			.ajcore-cart-modal-open{overflow:hidden}
 			.ajcore-product-add.ajcore-added{background:#16a34a!important}
 			.ajcore-floating-cart{position:fixed;right:22px;bottom:22px;z-index:99999;display:none!important;align-items:center;gap:10px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:12px 15px;box-shadow:0 18px 40px rgba(15,122,198,.28);font-weight:800;cursor:pointer;line-height:1}
@@ -12052,6 +12292,19 @@ class AJForms {
 				} catch (error) {}
 			}
 
+			// ?ajp_cart=open (from the site-wide floating cart on other pages) opens this cart.
+			if (params.get('ajp_cart') === 'open' && root.dataset.mode === 'cart') {
+				const opener = root.querySelector('.ajcore-cart-mini-button') || root.querySelector('.ajcore-floating-cart');
+				if (opener) {
+					window.setTimeout(function() { opener.click(); }, 0);
+				}
+				params.delete('ajp_cart');
+				try {
+					const query = params.toString();
+					window.history.replaceState(window.history.state, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
+				} catch (error) {}
+			}
+
 			// Desktop cart bar sticks just below the site's fixed/sticky header (and admin bar), not over it.
 			const miniBar = root.querySelector('.ajcore-cart-mini');
 			if (miniBar) {
@@ -12107,7 +12360,73 @@ class AJForms {
 				searchInput.value = state.q;
 			}
 
+			// After an explicit Add to Cart, show only the services recommended for what is in the
+			// cart (each card's data-related, ordered), with a bar that says the list is filtered
+			// and a "Show all services" button. Recommendations are optional, never required.
+			state.rel = [];
+			const relNote = document.createElement('div');
+			relNote.className = 'ajcore-products-related-note';
+			relNote.setAttribute('role', 'status');
+			relNote.hidden = true;
+			list.parentNode.insertBefore(relNote, list);
+
+			function cartRecommendations(cartIds) {
+				const inCart = {};
+				cartIds.forEach(function(id) { inCart[id] = true; });
+				const ordered = [];
+				cards.forEach(function(card) {
+					if (!inCart[card.dataset.priceId]) { return; }
+					(card.dataset.related || '').split(' ').filter(Boolean).forEach(function(id) {
+						if (!inCart[id] && ordered.indexOf(id) === -1) { ordered.push(id); }
+					});
+				});
+				return ordered;
+			}
+
+			function renderRelatedNote(cartIds) {
+				relNote.innerHTML = '';
+				relNote.hidden = state.rel.length === 0;
+				if (!state.rel.length) {
+					return;
+				}
+				const names = cards.filter(function(card) { return cartIds.indexOf(card.dataset.priceId) !== -1; })
+					.map(function(card) { return card.dataset.displayName || card.dataset.productName || ''; }).filter(Boolean);
+				const text = document.createElement('span');
+				text.textContent = 'Showing services that go with ' + names.join(', ') + '.';
+				const all = document.createElement('button');
+				all.type = 'button';
+				all.className = 'ajcore-products-related-all';
+				all.textContent = 'Show all services';
+				all.addEventListener('click', function() {
+					state.rel = [];
+					renderRelatedNote([]);
+					render(false);
+				});
+				relNote.appendChild(text);
+				relNote.appendChild(all);
+			}
+
+			root.addEventListener('ajcore:cart-added', function(event) {
+				const ids = event.detail && event.detail.priceIds ? event.detail.priceIds : [];
+				state.rel = cartRecommendations(ids);
+				state.page = 1;
+				renderRelatedNote(ids);
+				render(false);
+			});
+			root.addEventListener('ajcore:cart-changed', function(event) {
+				if (!state.rel.length) {
+					return;
+				}
+				const ids = event.detail && event.detail.priceIds ? event.detail.priceIds : [];
+				state.rel = ids.length ? cartRecommendations(ids) : [];
+				renderRelatedNote(ids);
+				render(false);
+			});
+
 			function matches(card) {
+				if (state.rel.length && state.rel.indexOf(card.dataset.priceId) === -1) {
+					return false;
+				}
 				if (state.cat && (' ' + (card.dataset.categories || '') + ' ').indexOf(' ' + state.cat + ' ') === -1) {
 					return false;
 				}
