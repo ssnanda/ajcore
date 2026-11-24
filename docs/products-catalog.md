@@ -163,3 +163,24 @@ Each product row has four parts:
   the selection.
 - The dependency cards on the Products page have been removed. Settings › Product Catalog is
   the only editor.
+
+## Test product (DDEV / local only)
+
+Settings › Product Catalog shows a **Test product** bar only on `*.ddev.site` (or a
+`local` / `development` environment). **Create test product** finds, or creates once, the Stripe
+product "AJCore Test Product – Do Not Purchase" ($1.00 one-time, metadata `ajcore_test=1`,
+`page_slug=ajcore-test`). It is found again by its metadata, so it is never created twice. It
+then re-syncs, adds the product to this site's "In shop" selection (only when the shop uses an
+explicit selection) and publishes `/service/ajcore-test/`.
+
+Any product with metadata `ajcore_test=1` is blocked on live sites (`ajcore_test_price_blocked()`):
+
+- never listed in the shop;
+- never sold, through public checkout or any of the four portal "add service" paths;
+- never given a page (bulk, auto-create and Create page all refuse).
+
+Override with the `ajcore_allow_test_products` filter. Use it with packages: Import, "Apply
+to" the test product, check the page, then **Undo** from the results or Recent imports. Every
+import saves the product's prior state (`ajcore_pkg_backups`, last 50). Undo restores it
+exactly, only while the product is unchanged since the import, and verifies the result in
+Stripe.

@@ -244,6 +244,144 @@ trait AJCore_Product_Packages {
 			. '<button type="submit" class="button button-small">' . esc_html__( 'Undo', 'ajforms' ) . '</button></form>';
 	}
 
+	/* ---- Test product (DDEV / local only) ----------------------------------------------------
+	 * One Stripe product for trying packages and the product page template without touching a
+	 * real product: "AJCore Test Product – Do Not Purchase", $1.00 one-time, metadata
+	 * ajcore_test=1 (blocked on live sites by ajcore_test_price_blocked()) and page_slug
+	 * ajcore-test. Created only from a DDEV / local site, found again by its metadata, so
+	 * repeated clicks never make a second one.
+	 */
+	const PKG_TEST_PRODUCT_NAME = 'AJCore Test Product – Do Not Purchase';
+
+	/** The test product in Stripe (searched by metadata), or null. */
+	private function pkg_find_test_product( $secret_key ) {
+		$found = $this->stripe_api_get( 'products/search', $secret_key, array( 'query' => "metadata['ajcore_test']:'1'", 'limit' => 5 ) );
+		if ( is_wp_error( $found ) ) {
+			return $found;
+		}
+		foreach ( (array) ( $found['data'] ?? array() ) as $product ) {
+			if ( is_array( $product ) && ! empty( $product['id'] ) ) {
+				return $product;
+			}
+		}
+		return null;
+	}
+
+	/** Creates (or reuses) the test product, puts it in this site's shop and gives it a page. */
+	private function pkg_create_test_product() {
+		$fail = function ( $text ) {
+			wp_safe_redirect( $this->pkg_catalog_url( array( 'catalog-error' => rawurlencode( $text ) ) ) );
+			exit;
+		};
+		if ( ! function_exists( 'ajcore_test_products_allowed' ) || ! ajcore_test_products_allowed() ) {
+			$fail( __( 'The test product can only be created on a DDEV / local site.', 'ajforms' ) );
+		}
+		$secret_key = $this->get_stripe_secret_key_for_portal();
+		if ( '' === $secret_key ) {
+			$fail( __( 'Stripe secret key is required.', 'ajforms' ) );
+		}
+		$product = $this->pkg_find_test_product( $secret_key );
+		if ( is_wp_error( $product ) ) {
+			$fail( __( 'Could not search Stripe: ', 'ajforms' ) . $product->get_error_message() );
+		}
+		$created = false;
+		if ( ! $product ) {
+			$product = $this->stripe_api_request(
+				'products',
+				$secret_key,
+				array(
+					'name'                              => self::PKG_TEST_PRODUCT_NAME,
+					'description'                       => 'Internal AJCore test product for trying product content on DDEV. Not for sale.',
+					'active'                            => 'true',
+					'metadata[ajcore_test]'             => '1',
+					'metadata[page_slug]'               => 'ajcore-test',
+					'default_price_data[currency]'      => 'usd',
+					'default_price_data[unit_amount]'   => '100',
+				),
+				'POST',
+				array( 'Idempotency-Key' => 'ajcore-test-product-v1-' . md5( home_url() ) )
+			);
+			if ( is_wp_error( $product ) ) {
+				$fail( __( 'Could not create the test product in Stripe: ', 'ajforms' ) . $product->get_error_message() );
+			}
+			$created = true;
+		} elseif ( empty( $product['active'] ) ) {
+			$this->stripe_api_request( 'products/' . rawurlencode( $product['id'] ), $secret_key, array( 'active' => 'true' ) );
+		}
+
+		// Re-sync so the product and its price are in this site's catalog.
+		$sync = $this->sync_all_product_copies( $secret_key );
+		if ( is_wp_error( $sync ) ) {
+			$fail( __( 'Test product is in Stripe, but the re-sync failed: ', 'ajforms' ) . $sync->get_error_message() );
+		}
+		$price_id = is_array( $product['default_price'] ?? null ) ? (string) $product['default_price']['id'] : (string) ( $product['default_price'] ?? '' );
+		if ( '' === $price_id || ! ajcore_product_catalog_price_row( $price_id ) ) {
+			$fail( __( 'Test product is in Stripe, but its price is not in the synced catalog yet. Click Sync Stripe Products.', 'ajforms' ) );
+		}
+
+		// In shop on this (DDEV) site only: the selection is a per-site option.
+		// An empty selection means "every active product", which already includes it: adding it
+		// there would shrink the shop to the test product alone.
+		$display  = $this->get_public_product_display_settings();
+		$selected = array_values( array_unique( array_merge( (array) $display['selected_prices'], array( $price_id ) ) ) );
+		if ( ! empty( $display['selected_prices'] ) && $selected !== (array) $display['selected_prices'] ) {
+			$this->save_public_product_display_settings( $selected, (array) $display['order'] ); // null builder = keep as saved
+		}
+		$page_id = ajcore_product_catalog_page_for_price( $price_id, null, false );
+		if ( ! $page_id ) {
+			$page_id = $this->create_product_page_for_price( $price_id, 'publish' );
+			if ( is_wp_error( $page_id ) ) {
+				$fail( __( 'Test product is in the shop, but its page was not created: ', 'ajforms' ) . $page_id->get_error_message() );
+			}
+		}
+		$done = wp_generate_password( 20, false );
+		set_transient(
+			'ajcore_pkg_done_' . $done,
+			array(
+				'user'    => get_current_user_id(),
+				'results' => array(
+					array( 'ok' => true, 'text' => ( $created ? __( 'Test product created in Stripe', 'ajforms' ) : __( 'Test product found in Stripe', 'ajforms' ) ) . ' (' . $product['id'] . '), in this site\'s shop, page: ' . get_permalink( (int) $page_id ) ),
+				),
+			),
+			30 * MINUTE_IN_SECONDS
+		);
+		wp_safe_redirect( $this->pkg_catalog_url( array( 'pkg_done' => $done ) ) );
+		exit;
+	}
+
+	/** DDEV-only bar: create / open the test product. */
+	private function render_pkg_test_product_bar() {
+		if ( ! function_exists( 'ajcore_test_products_allowed' ) || ! ajcore_test_products_allowed() ) {
+			return;
+		}
+		$test_row = null;
+		$cache    = $this->get_stripe_products_cache();
+		foreach ( isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array() as $row ) {
+			if ( is_array( $row ) && ajcore_price_is_test( $row ) && ! empty( $row['product_active'] ) ) {
+				$test_row = $row;
+				break;
+			}
+		}
+		$page_id = $test_row ? ajcore_product_catalog_page_for_price( (string) $test_row['id'], null, false ) : 0;
+		?>
+		<div class="ajcore-pkg-box ajcore-pkg-testbar">
+			<strong><?php esc_html_e( 'Test product', 'ajforms' ); ?></strong>
+			<span class="ajcore-pkg-mode"><?php esc_html_e( 'DDEV only', 'ajforms' ); ?></span>
+			<?php if ( $test_row && $page_id ) : ?>
+				<span><?php echo esc_html( self::PKG_TEST_PRODUCT_NAME ); ?></span>
+				<a class="button button-small" href="<?php echo esc_url( (string) get_permalink( $page_id ) ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'Open test page', 'ajforms' ); ?></a>
+				<span class="ajcore-catalog-muted"><?php esc_html_e( 'Import a package with "Apply to" set to this product, check the page, then Undo.', 'ajforms' ); ?></span>
+			<?php else : ?>
+				<form method="post" style="display:inline;" onsubmit="return confirm('<?php echo esc_js( __( 'Create "AJCore Test Product – Do Not Purchase" ($1, one-time) in your Stripe account (or reuse it if it exists), add it to this DDEV shop and publish its page? Live sites never show or sell it.', 'ajforms' ) ); ?>');">
+					<?php wp_nonce_field( 'ajcore_test_product', 'ajcore_test_product_nonce' ); ?>
+					<button type="submit" class="button button-primary button-small"><?php echo $test_row ? esc_html__( 'Set up test product page', 'ajforms' ) : esc_html__( 'Create test product', 'ajforms' ); ?></button>
+				</form>
+				<span class="ajcore-catalog-muted"><?php esc_html_e( 'A $1 product marked ajcore_test, for trying packages and the page layout. Hidden and unsellable on live sites.', 'ajforms' ); ?></span>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
 	/** Synced Stripe products: product_id => name (active only unless $all). */
 	private function pkg_product_choices( $all = false ) {
 		$cache   = $this->get_stripe_products_cache();
@@ -595,6 +733,11 @@ trait AJCore_Product_Packages {
 			exit;
 		}
 
+		if ( isset( $_POST['ajcore_test_product_nonce'] ) ) {
+			check_admin_referer( 'ajcore_test_product', 'ajcore_test_product_nonce' );
+			$this->pkg_create_test_product();
+		}
+
 		if ( isset( $_POST['ajcore_pkg_undo_nonce'], $_POST['pkg_backup'] ) ) {
 			check_admin_referer( 'ajcore_pkg_undo', 'ajcore_pkg_undo_nonce' );
 			$this->pkg_undo( sanitize_key( wp_unslash( $_POST['pkg_backup'] ) ) );
@@ -806,6 +949,8 @@ trait AJCore_Product_Packages {
 		$live = ! empty( $mode['is_live'] );
 		$tpl  = wp_nonce_url( $this->pkg_catalog_url( array( 'ajf_products_action' => 'pkg_template' ) ), 'ajcore_pkg_template' );
 
+		$this->render_pkg_test_product_bar();
+
 		// Results after apply.
 		$done = isset( $_GET['pkg_done'] ) ? get_transient( 'ajcore_pkg_done_' . sanitize_key( wp_unslash( $_GET['pkg_done'] ) ) ) : false; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		if ( is_array( $done ) && (int) $done['user'] === get_current_user_id() ) {
@@ -981,6 +1126,7 @@ trait AJCore_Product_Packages {
 			.ajcore-pkg-live{padding:6px 10px;border-radius:8px;background:#fee2e2;color:#991b1b;font-weight:600}
 			.ajcore-pkg-results li.ok{color:#166534}
 			.ajcore-pkg-undo{display:inline;margin-left:6px}
+			.ajcore-pkg-testbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;border-style:dashed;background:#f8fafc}
 			.ajcore-pkg-recent td{vertical-align:top}
 			.ajcore-pkg-results li.bad{color:#b32d2e}
 		</style>
