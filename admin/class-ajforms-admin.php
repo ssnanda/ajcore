@@ -28987,9 +28987,12 @@ class AJForms_Admin {
 				.ajcore-products-hero{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:18px;padding:14px 20px;border:1px solid #e5e7eb;border-radius:14px;background:#fff}
 				.ajcore-products-hero-title{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
 				.ajcore-products-hero h1{margin:0;padding:0;font-size:24px;line-height:1.2}
-				.ajcore-products-hero .nav-tab-wrapper{margin:0!important;padding:0;border:0;display:flex;gap:4px}
-				.ajcore-products-hero .nav-tab{margin:0;border:1px solid #dcdcde;border-radius:6px;background:#f6f7f7;padding:5px 14px;font-size:13px;line-height:1.4}
-				.ajcore-products-hero .nav-tab-active{background:#2271b1;border-color:#2271b1;color:#fff}
+				.ajcore-products-hero .nav-tab-wrapper{margin:0!important;padding:0;border:0;display:flex;gap:10px}
+				.ajcore-products-hero .nav-tab{--c:#2563eb;margin:0;min-width:130px;text-align:center;border:2px solid var(--c);border-radius:10px;background:color-mix(in srgb,var(--c) 10%,#fff);color:var(--c);padding:10px 26px;font-size:15px;font-weight:700;line-height:1.3;transition:background .15s}
+				.ajcore-products-hero .nav-tab:hover{background:color-mix(in srgb,var(--c) 22%,#fff);color:var(--c)}
+				.ajcore-products-hero .nav-tab.ajcore-tab-catalog{--c:#db2777}
+				.ajcore-products-hero .nav-tab.ajcore-tab-ui{--c:#0d9488}
+				.ajcore-products-hero .nav-tab-active,.ajcore-products-hero .nav-tab-active:hover{background:var(--c);color:#fff;box-shadow:0 4px 12px color-mix(in srgb,var(--c) 35%,transparent)}
 				.ajcore-products-hero p{margin:0;color:#64748b;max-width:760px}
 				.ajcore-products-notice{margin:0 0 18px;padding:12px 14px;border-radius:10px}
 				.ajcore-products-notice.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
@@ -29934,10 +29937,11 @@ class AJForms_Admin {
 		foreach ( $tabs as $slug => $label ) {
 			$url = add_query_arg( array( 'page' => 'ajforms-products', 'tab' => $slug ), admin_url( 'admin.php' ) );
 			printf(
-				'<a href="%1$s" class="nav-tab%2$s">%3$s</a>',
+				'<a href="%1$s" class="nav-tab ajcore-tab-%4$s%2$s">%3$s</a>',
 				esc_url( $url ),
 				$slug === $current ? ' nav-tab-active' : '',
-				esc_html( $label )
+				esc_html( $label ),
+				esc_attr( $slug )
 			);
 		}
 		echo '</nav>';
@@ -30024,6 +30028,19 @@ class AJForms_Admin {
 		?>
 		<style>
 			.ajcore-catalog-bar{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;margin:0 0 8px}
+			.ajcore-catalog-table{border-radius:10px;overflow:hidden}
+			.ajcore-catalog-table > thead > tr > th{background:#f8fafc;font-weight:600;color:#1e293b;padding:10px 12px;vertical-align:bottom}
+			.ajcore-catalog-table > tbody > tr > td{vertical-align:middle;padding:10px 12px}
+			.ajcore-catalog-table > tbody > tr:hover > td{background:#f8fbff}
+			.ajcore-catalog-table select.ajcore-catalog-cat,.ajcore-catalog-table select.ajcore-catalog-listing{width:100%;max-width:210px}
+			.ajcore-catalog-table select.ajcore-catalog-page-pick{margin-top:6px;max-width:320px;width:100%}
+			.ajcore-catalog-path{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;text-decoration:none;color:#1d4ed8;word-break:break-all}
+			.ajcore-catalog-path:hover{text-decoration:underline}
+			.ajcore-catalog-plan{font-size:11px;background:none;color:#64748b;word-break:break-all;padding:0}
+			.ajcore-catalog-pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600}
+			.ajcore-catalog-pill.is-live{background:#dcfce7;color:#166534}
+			.ajcore-catalog-pill.is-draft{background:#fef3c7;color:#92400e}
+			.ajcore-catalog-actions{display:inline-flex;gap:10px;font-size:12px}
 			.ajcore-catalog-bar .ajcore-catalog-bulk-bar{display:inline-flex;gap:6px;align-items:center}
 			.ajcore-catalog-bar .button-primary{margin-left:auto}
 			.ajcore-catalog-cats td,.ajcore-catalog-cats th{padding:4px 6px}
@@ -30129,7 +30146,9 @@ class AJForms_Admin {
 			<table class="widefat striped ajcore-catalog-table">
 				<thead>
 					<tr>
-						<th style="width:28px;"><?php if ( ! empty( $bulk_eligible ) ) : ?><input type="checkbox" id="ajcore-catalog-bulk-all" title="<?php esc_attr_e( 'Select every in-shop product without a page', 'ajforms' ); ?>"><?php endif; ?></th>
+						<?php if ( ! empty( $bulk_eligible ) ) : ?>
+							<th style="width:28px;"><input type="checkbox" id="ajcore-catalog-bulk-all" title="<?php esc_attr_e( 'Select every in-shop product without a page', 'ajforms' ); ?>"></th>
+						<?php endif; ?>
 						<th style="width:28%;"><?php esc_html_e( 'Product', 'ajforms' ); ?></th>
 						<th style="width:20%;"><?php esc_html_e( 'Category', 'ajforms' ); ?> <button type="button" class="button-link" id="ajcore-catalog-cats-toggle"><?php esc_html_e( 'Edit', 'ajforms' ); ?></button></th>
 						<th style="width:20%;">
@@ -30147,7 +30166,7 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Product page', 'ajforms' ); ?></th>
 					</tr>
 					<tr id="ajcore-catalog-cats-row" hidden>
-						<td colspan="5" style="background:#f8fafc;">
+						<td colspan="<?php echo empty( $bulk_eligible ) ? 4 : 5; ?>" style="background:#f8fafc;">
 							<table class="ajcore-catalog-cats" style="width:100%;max-width:760px;border-collapse:collapse;">
 								<thead><tr><th style="text-align:left;"><?php esc_html_e( 'Category name', 'ajforms' ); ?></th><th style="text-align:left;"><?php esc_html_e( 'Slug', 'ajforms' ); ?></th><th style="width:60px;"><?php esc_html_e( 'In shop', 'ajforms' ); ?></th></tr></thead>
 								<tbody>
@@ -30207,11 +30226,13 @@ class AJForms_Admin {
 					);
 					?>
 					<tr class="<?php echo $is_active ? '' : 'is-archived'; ?>">
+						<?php if ( ! empty( $bulk_eligible ) ) : ?>
 						<td>
 							<?php if ( isset( $bulk_eligible[ $price_id ] ) ) : ?>
 								<input type="checkbox" class="ajcore-catalog-bulk" name="catalog_bulk[]" value="<?php echo esc_attr( $price_id ); ?>" data-name="<?php echo esc_attr( $bulk_eligible[ $price_id ] ); ?>">
 							<?php endif; ?>
 						</td>
+						<?php endif; ?>
 						<td>
 							<input type="hidden" name="catalog_shown[]" value="<?php echo esc_attr( $price_id ); ?>">
 							<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : $price_id ); ?></strong>
@@ -30233,7 +30254,7 @@ class AJForms_Admin {
 						<td>
 							<?php // Unchanged Stripe-derived value stays "from Stripe" (no site override is saved). ?>
 							<input type="hidden" name="catalog_cat_orig[<?php echo esc_attr( $price_id ); ?>]" value="<?php echo esc_attr( $site_chosen ? 'site:' . implode( ',', $assigned ) : 'stripe:' . implode( ',', $assigned ) ); ?>">
-							<select class="ajcore-catalog-cat" name="catalog_cat[<?php echo esc_attr( $price_id ); ?>]" style="max-width:100%;">
+							<select class="ajcore-catalog-cat" name="catalog_cat[<?php echo esc_attr( $price_id ); ?>]">
 								<option value=""><?php esc_html_e( '— None —', 'ajforms' ); ?></option>
 								<?php foreach ( $categories as $category ) : ?>
 									<option value="<?php echo esc_attr( $category['slug'] ); ?>" <?php selected( $first_cat, $category['slug'] ); ?>><?php echo esc_html( $category['name'] ); ?></option>
@@ -30249,7 +30270,7 @@ class AJForms_Admin {
 							<?php endif; ?>
 						</td>
 						<td>
-							<select name="catalog_listing[<?php echo esc_attr( $price_id ); ?>]" style="max-width:100%;">
+							<select class="ajcore-catalog-listing" name="catalog_listing[<?php echo esc_attr( $price_id ); ?>]">
 								<option value="0"><?php echo esc_html( sprintf( __( 'Default (%s)', 'ajforms' ), $default_label ) ); ?></option>
 								<?php foreach ( $page_choices as $choice_id => $label ) : ?>
 									<option value="<?php echo (int) $choice_id; ?>" <?php selected( $own_listing, $choice_id ); ?>><?php echo esc_html( $label ); ?></option>
@@ -30257,23 +30278,28 @@ class AJForms_Admin {
 							</select>
 						</td>
 						<td>
+							<?php // Linked page: its address + status, Edit, and Change (reveals the page picker). ?>
 							<div class="ajcore-catalog-page">
-								<select name="catalog_pages[<?php echo esc_attr( $price_id ); ?>]">
-									<option value="0"><?php esc_html_e( '— None —', 'ajforms' ); ?></option>
-									<?php foreach ( $page_choices as $choice_id => $label ) : ?>
-										<option value="<?php echo (int) $choice_id; ?>" <?php selected( $page_id, $choice_id ); ?>><?php echo esc_html( $label ); ?></option>
-									<?php endforeach; ?>
-								</select>
 								<?php if ( $page_id ) : ?>
-									<a href="<?php echo esc_url( (string) get_permalink( $page_id ) ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'View', 'ajforms' ); ?></a>
-									<a href="<?php echo esc_url( (string) get_edit_post_link( $page_id ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+									<?php $page_status = get_post_status( $page_id ); ?>
+									<a class="ajcore-catalog-path" href="<?php echo esc_url( (string) get_permalink( $page_id ) ); ?>" target="_blank" rel="noopener" title="<?php esc_attr_e( 'View page', 'ajforms' ); ?>"><?php echo esc_html( wp_make_link_relative( (string) get_permalink( $page_id ) ) ); ?></a>
+									<span class="ajcore-catalog-pill <?php echo 'publish' === $page_status ? 'is-live' : 'is-draft'; ?>"><?php echo 'publish' === $page_status ? esc_html__( 'Published', 'ajforms' ) : esc_html( ucfirst( (string) $page_status ) ); ?></span>
+									<span class="ajcore-catalog-actions">
+										<a href="<?php echo esc_url( (string) get_edit_post_link( $page_id ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+										<button type="button" class="button-link ajcore-catalog-change"><?php esc_html_e( 'Change', 'ajforms' ); ?></button>
+									</span>
 								<?php else : ?>
-									<a href="<?php echo esc_url( $create_url ); ?>"><?php esc_html_e( 'Create page', 'ajforms' ); ?></a>
+									<a class="button button-small" href="<?php echo esc_url( $create_url ); ?>"><?php esc_html_e( 'Create page', 'ajforms' ); ?></a>
+									<code class="ajcore-catalog-plan"><?php echo esc_html( $row_path . ajcore_product_catalog_page_slug( $price ) . '/' ); ?></code>
+									<button type="button" class="button-link ajcore-catalog-change"><?php esc_html_e( 'Link existing', 'ajforms' ); ?></button>
 								<?php endif; ?>
 							</div>
-							<?php if ( ! $page_id ) : ?>
-								<div class="ajcore-catalog-muted" style="margin-top:4px;"><code><?php echo esc_html( $row_path . ajcore_product_catalog_page_slug( $price ) . '/' ); ?></code></div>
-							<?php endif; ?>
+							<select class="ajcore-catalog-page-pick" name="catalog_pages[<?php echo esc_attr( $price_id ); ?>]" hidden>
+								<option value="0"><?php esc_html_e( '— None —', 'ajforms' ); ?></option>
+								<?php foreach ( $page_choices as $choice_id => $label ) : ?>
+									<option value="<?php echo (int) $choice_id; ?>" <?php selected( $page_id, $choice_id ); ?>><?php echo esc_html( $label ); ?></option>
+								<?php endforeach; ?>
+							</select>
 						</td>
 					</tr>
 				<?php endforeach; ?>
@@ -30299,6 +30325,12 @@ class AJForms_Admin {
 			if (toggle && row) {
 				toggle.addEventListener('click', function () { row.hidden = !row.hidden; toggle.textContent = row.hidden ? '<?php echo esc_js( __( 'Edit', 'ajforms' ) ); ?>' : '<?php echo esc_js( __( 'Done', 'ajforms' ) ); ?>'; });
 			}
+			document.querySelectorAll('.ajcore-catalog-change').forEach(function (btn) {
+				btn.addEventListener('click', function () {
+					var pick = btn.closest('td').querySelector('.ajcore-catalog-page-pick');
+					if (pick) { pick.hidden = false; pick.focus(); btn.hidden = true; }
+				});
+			});
 			document.querySelectorAll('.ajcore-catalog-cat').forEach(function (sel) {
 				var input = sel.parentNode.querySelector('.ajcore-catalog-cat-new');
 				sel.addEventListener('change', function () {
