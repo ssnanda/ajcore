@@ -1175,6 +1175,18 @@ class AJCore_Zoho_Mail {
 				}
 			}
 		}
+		// No copy in the login's own mailbox (shared-mailbox mail is not always delivered there): list the PDFs from the
+		// Shared Mailbox API itself (includeAttachments=true). Their ids carry the "s:" prefix so intake_attachment()
+		// knows to download them from the shared mailbox, not the own-mailbox copy.
+		if ( ! $loc ) {
+			$shared = $this->shared_pdf_attachments( (string) $message_id, $address );
+			if ( is_wp_error( $shared ) ) {
+				$att_debug[] = 'shared mailbox attachment list: ' . $shared->get_error_message();
+			} else {
+				$pdfs      = $shared;
+				$att_debug = array();
+			}
+		}
 		return array(
 			'subject'   => self::deep_string( $details, array( 'title', 'subject' ) ),
 			'sender'    => '' !== $from_name && '' !== $from_email ? $from_name . ' <' . $from_email . '>' : ( '' !== $from_email ? $from_email : $from_name ),
@@ -1189,8 +1201,43 @@ class AJCore_Zoho_Mail {
 		);
 	}
 
+	/**
+	 * A message's PDF attachments as listed by the Shared Mailbox API ("Get a Message" with includeAttachments=true;
+	 * https://www.zoho.com/mail/help/api/v2/get-a-message.html), with "s:"-prefixed ids. Inline images are skipped.
+	 */
+	private function shared_pdf_attachments( $message_id, $address = '' ) {
+		$data = $this->shared_get( '/messages/' . rawurlencode( $message_id ), array( 'includeAttachments' => 'true' ), $address );
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		// Breadth-first, so the message's own list is found before any comment's attachments.
+		$list = self::deep_find( isset( $data['data'] ) ? $data['data'] : $data, 'attachments' );
+		$out  = array();
+		foreach ( is_array( $list ) ? $list : array() as $a ) {
+			if ( ! is_array( $a ) || empty( $a['attachmentId'] ) || ! empty( $a['isAttachmentInline'] ) ) {
+				continue;
+			}
+			$name   = isset( $a['attachmentName'] ) ? (string) $a['attachmentName'] : '';
+			$format = strtolower( (string) ( isset( $a['attachmentFormat'] ) ? $a['attachmentFormat'] : '' ) );
+			$type   = strtolower( (string) ( isset( $a['attachmentFileType'] ) ? $a['attachmentFileType'] : '' ) );
+			$is_pdf = 0 === strcasecmp( substr( $name, -4 ), '.pdf' ) || 'pdf' === $format || false !== strpos( $type, 'pdf' );
+			if ( '' === $name || ! $is_pdf ) {
+				continue;
+			}
+			$out[] = array(
+				'filename'      => 0 === strcasecmp( substr( $name, -4 ), '.pdf' ) ? $name : $name . '.pdf',
+				'attachment_id' => 's:' . (string) $a['attachmentId'],
+				'size'          => isset( $a['attachmentSize'] ) ? (int) $a['attachmentSize'] : 0,
+			);
+		}
+		return $out;
+	}
+
 	/** Raw bytes of one attachment (Zoho returns the file itself, not JSON), or WP_Error. */
 	public function intake_attachment( $message_id, $attachment_id, $address = '' ) {
+		if ( 0 === strpos( (string) $attachment_id, 's:' ) ) {
+			return $this->shared_attachment_bytes( (string) $message_id, substr( (string) $attachment_id, 2 ), $address );
+		}
 		$details    = $this->get_message( $message_id, $address );
 		if ( is_wp_error( $details ) ) {
 			return $details;
@@ -1205,6 +1252,27 @@ class AJCore_Zoho_Mail {
 		}
 		if ( 200 !== $res['status'] || '' === $res['raw'] ) {
 			return new WP_Error( 'zoho_mail_attachment_failed', sprintf( __( 'Zoho attachment download returned HTTP %d.', 'ajcore' ), $res['status'] ) );
+		}
+		return $res['raw'];
+	}
+
+	/**
+	 * Bytes of an attachment listed by the Shared Mailbox API. Zoho documents the listing but (as of 2026-11) no shared
+	 * download route; this uses the path that mirrors the documented "Get a Message" one. If Zoho answers anything but
+	 * file bytes, the error says so plainly rather than filing a broken PDF.
+	 */
+	private function shared_attachment_bytes( $message_id, $attachment_id, $address = '' ) {
+		$address = '' !== (string) $address ? strtolower( trim( (string) $address ) ) : $this->shared_address();
+		if ( '' === $address ) {
+			return new WP_Error( 'zoho_mail_not_connected', __( 'Zoho Mail is not connected.', 'ajcore' ) );
+		}
+		$res = $this->api_request( '/v2/sharedmailbox/' . $this->path_address( $address ) . '/messages/' . rawurlencode( $message_id ) . '/attachments/' . rawurlencode( $attachment_id ) );
+		if ( is_wp_error( $res ) ) {
+			return $res;
+		}
+		// A JSON reply (error envelope) is never the file; a real PDF starts with "%PDF".
+		if ( 200 !== $res['status'] || 0 !== strpos( ltrim( (string) $res['raw'] ), '%PDF' ) ) {
+			return new WP_Error( 'zoho_mail_shared_attachment_failed', sprintf( __( 'Zoho shared-mailbox attachment download failed (HTTP %1$d: %2$s). The message has no copy in your own mailbox to download from instead.', 'ajcore' ), $res['status'], substr( preg_replace( '/\s+/', ' ', (string) $res['raw'] ), 0, 160 ) ) );
 		}
 		return $res['raw'];
 	}
